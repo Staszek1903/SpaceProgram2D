@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <vector>
 #include <functional>
+#include <math.h>
 #include <cmath> 
 #include <memory>
 #include <array>
@@ -88,6 +89,9 @@ struct Vessel{
     Vector2 velocity{0.0f,0.0f}; 
     float rotation_deg{0.0f};
     float angular_vel_deg{0.0f};
+
+    float mass = 1.0;
+    float inertia = 1.0;
 };
 
 //--------------------------------------
@@ -116,6 +120,14 @@ std::vector<int> part_info_index = {
     0,
     1,
     -1
+};
+
+std::vector<float> part_dry_mass = {
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
 };
 
 std::vector<ArrayV2> parts_poly ={
@@ -654,11 +666,127 @@ void test_has_point(){
 // PHYSICS
 ////////////////////////////////////////////////////
 
-//offset and force are given in vessel space
+Vector2 get_centroid(Vector2 a, Vector2 b, Vector2 c){
+    return (a + b + c) / 3.0f;
+}
+
+float triangle_area(Vector2 a, Vector2 b, Vector2 c){
+    return std::abs(0.5 * (((b.x-a.x)*(c.y-a.y))-((c.x-a.x)*(b.y-a.y))));
+}
+
+float polygon_area(ArrayV2 &v){
+    float area = 0.0;
+    size_t prev = v.size() - 1;
+    for(size_t i =0; i < v.size(); ++i){
+        area += triangle_area({0.0,0.0}, v.at(prev), v.at(i));
+        prev = i;
+    }
+
+    return area;
+}
+
+void test_polygon_area(){
+    ArrayV2 v = {{-1,-1}, {-1, 1}, {1,1}, {1, -1}};
+    assert(polygon_area(v) == 4.0f);
+}
+
+Vector2 get_centroid(ArrayV2 &v){
+    assert(v.size() >= 3);
+    Vector2 a{v.at(0)}, b{}, c{}, sum{}, tri_cen{};
+    float area = 0.0, tri_area = 0.0;
+    for(size_t i = 1; i < v.size()-1; ++i){
+        b = v.at(i);
+        c = v.at(i+1);
+        std::cout<<"a: "<<a<<" b: "<<b<<" c: "<<c<<std::endl;
+        tri_area = triangle_area(a,b,c);
+        tri_cen = get_centroid(a,b,c);
+        std::cout<<"centroid: "<<tri_cen<<" area: "<<tri_area<<std::endl;
+        area += tri_area;
+        sum += tri_cen * tri_area;
+    }
+
+    return sum / area;
+}
+
+void test_get_centroid(){
+    ArrayV2 v = {{-1,-1}, {-1, 1}, {1,1}, {1, -1}};
+    Vector2 centroid = get_centroid(v), expected{};
+    std::cout<<"Test centroid: "<<centroid<< " expected: "<< expected<<std::endl;
+    assert(centroid == expected);
+}
+ 
+const double prec = 0.1f;
+void adjust_parts_centroids(){
+    for(size_t i = 0; i < parts_poly.size(); ++i){
+        ArrayV2 & a = parts_poly.at(i);
+        Vector2 c = get_centroid(a);
+        for(Vector2 & v: a){
+            v -= c;
+            v = Vector2{round(v.x/prec), round(v.y/prec)} * prec;
+        }
+        ArrayV2 & links = linkages.at(i);
+        for(Vector2 & l: links){
+            l -= c;
+            l = Vector2{round(l.x/prec), round(l.y/prec)} * prec;
+        }
+    }
+}
+
+void calculate_vessel_mass(Vessel &vessel){
+    vessel.mass = 0.0;
+    for(PartItem &item: vessel.parts){
+        vessel.mass += part_dry_mass[item.id];
+    }
+}
+
+float get_inertia(ArrayV2 &v, float mass){
+    float inertia = 0.0;
+    float area = polygon_area(v);
+    float tri_mass = 0.0, tri_area = 0.0, tri_inertia = 0.0;
+
+    size_t prev = v.size()-1;
+    for(size_t i = 0; i< v.size(); ++i){
+        tri_area = triangle_area({0,0}, v.at(prev), v.at(i));
+        tri_mass = mass * tri_area / area;
+        tri_inertia = tri_mass * (lensq(v.at(prev)) + lensq(v.at(i)) + dot(v.at(prev), v.at(i)));
+        prev = i;
+        inertia += tri_inertia;
+    }
+    return inertia;
+}
+
+void calculate_vessel_inertia(Vessel &vessel){
+    vessel.inertia = 0.0;
+    for(PartItem & item: vessel.parts){
+        float inertia = get_inertia(parts_poly.at(item.id), part_dry_mass.at(item.id));
+        Vector2 offset = item.position;
+        float distsq = lensq(offset);
+        vessel.inertia += inertia + vessel.mass*distsq; // Parallel axis theorem
+    }
+}
+
+float sign(float a){
+    return (-1.0 * (a<0.0) + 1.0 * (a>0.0));
+}
+
+//offset and force are given in world space with origin at vessel position
 void add_force(Vessel &vessel, Vector2 force, Vector2 offset){
-    //get mass
+    assert(!isnan(vessel.angular_vel_deg));
+
+    if(lensq(force) < 0.0000001) return;
     //add linear force
-    //get inertia
+    vessel.velocity += force / vessel.mass;
+
     //add rotational force
+    Vector2 force_normal = normalized(force);
+    Vector2 projected_offset = force_normal * dot(offset, force_normal);
+    Vector2 tangent_offset = offset - projected_offset;
+    float offcenter = len(tangent_offset) * sign(cross(tangent_offset, force_normal));
+
+    vessel.angular_vel_deg += RAD2DEG * (offcenter*len(force))/vessel.inertia;
+
+    if(isnan(vessel.angular_vel_deg)){
+        std::cout<<"AAAAAAAAAAAA"<<std::endl;
+    }
 }
 #endif // COMMON_H

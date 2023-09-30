@@ -228,6 +228,7 @@ class EditorScreen: public Screen{
                 point = transform_point(point, part.position, 0.0, part.scale);
                 DrawCircleV({point.x, point.y}, 5.0f / camera.zoom, ((part.links_joined>>i)&1)? GREEN : BLUE );
             }
+            DrawCircleV(part.position, 5.0f / camera.zoom, RED );
             //DrawText(TextFormat("%d",part.links_joined), part.position.x, part.position.y, 8, BLACK);
             //draw_triangle_fan(points, part.position, 0.0, part.scale-2, part.color);
         }
@@ -270,7 +271,7 @@ class EditorScreen: public Screen{
     }
 
 
-    float grid_snap = 0.2f;
+    float grid_snap = 0.1f;
     void update_parts(){
         // CHECK PART DRAG
         Vector2 point = {0,0}, mouse_pos = get_mouse_pos_world_space(camera);
@@ -337,6 +338,9 @@ class EditorScreen: public Screen{
             case PartType::TANK: vessel_to_launch.tanks.push_back(FueltankPart{i}); break;
             }
         }
+
+        calculate_vessel_mass(vessel_to_launch);
+        calculate_vessel_inertia(vessel_to_launch);
     }
 
 public:

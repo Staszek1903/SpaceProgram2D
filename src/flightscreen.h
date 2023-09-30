@@ -25,16 +25,27 @@ class FlightScreen: public Screen{
 
     CollisionInfo collision_info;
 
+    void update_engines(Vessel & vessel){
+        for(EnginePart & engine: vessel.engines){
+            PartItem & item = vessel.parts.at(engine.part_item_index);
+            Vector2 offset = rotate_point(item.position, vessel.rotation_deg * DEG2RAD);
+            Vector2 force_normal = rotate_point( Vector2(0.0,-1.0), vessel.rotation_deg * DEG2RAD );
+
+            add_force(vessel, force_normal * 0.03f * throttle, offset);
+        }
+    }
+
     void update_vessel(Vessel & vessel){
         float dt = GetFrameTime();
 
-        if(IsKeyDown(KEY_D)) current_vessel.angular_vel_deg += 1.0;
-        if(IsKeyDown(KEY_A)) current_vessel.angular_vel_deg -= 1.0;
+        if(IsKeyDown(KEY_D)) current_vessel.angular_vel_deg += 10.0/current_vessel.inertia;
+        if(IsKeyDown(KEY_A)) current_vessel.angular_vel_deg -= 10.0/current_vessel.inertia;
         
-        current_vessel.velocity += Vector2{
-            std::cos( DEG2RAD * (current_vessel.rotation_deg - 90.0f) ),
-            std::sin( DEG2RAD * (current_vessel.rotation_deg - 90.0f) )
-            } * 0.03f * throttle;
+        update_engines(vessel);
+        // current_vessel.velocity += Vector2{
+        //     std::cos( DEG2RAD * (current_vessel.rotation_deg - 90.0f) ),
+        //     std::sin( DEG2RAD * (current_vessel.rotation_deg - 90.0f) )
+        //     } * 0.03f * throttle;
 
         float radiussq = lensq(vessel.position);
         Vector2 gravity = -normalized(vessel.position) * gravity_magnitude / radiussq;
