@@ -71,6 +71,8 @@ class EditorScreen: public Screen{
     std::vector<std::unique_ptr<Action>> actions;
     size_t actions_top = -1;
 
+    bool rotate_part = true;
+
     std::string error_text = "";
 
     Vessel vessel_to_launch;
@@ -104,33 +106,13 @@ class EditorScreen: public Screen{
             camera.target = prev_camera_pos - dp/camera.zoom; 
         }
 
-        float wheel = GetMouseWheelMove();
+        float wheel = GetMouseWheelMove() * float(!rotate_part);
         camera.zoom *= 1.0 + 0.1 * wheel;
 
         // if(IsKeyDown(KEY_RIGHT)) camera.target.x += 2;
         // if(IsKeyDown(KEY_LEFT)) camera.target.x -= 2;
         // if(IsKeyDown(KEY_DOWN)) camera.target.y += 2;
         // if(IsKeyDown(KEY_UP)) camera.target.y -= 2;
-    }
-
-    bool check_linkage(PartItem &a, PartItem &b){
-        bool connected = false;
-        ArrayV2 &la = linkages.at(a.id);
-        ArrayV2 &lb = linkages.at(b.id);
-        for(size_t i=0; i<la.size(); ++i){
-            Vector2 pa = la.at(i);
-            pa = transform_point(pa, a.position, 0.0, a.scale);
-            for(size_t j=0; j<lb.size(); ++j){
-                Vector2 pb = lb.at(j);
-                pb = transform_point(pb, b.position, 0.0, b.scale);
-                bool same = (pa==pb);
-                a.links_joined = a.links_joined | ((1<<i)*same);
-                b.links_joined = b.links_joined | ((1<<j)*same);
-                connected = connected || same;
-            }
-        }
-
-        return connected;
     }
 
 
@@ -142,8 +124,14 @@ class EditorScreen: public Screen{
             for(PartItem &partb: editable_parts){
                 if(parta == partb) continue;
                 check_linkage(parta, partb);
+                std::cout<<"linkages: "<<parta.links_joined<<std::endl;
+                std::cout<<"linkages: "<<partb.links_joined<<std::endl;
             }
         }
+
+        // for(PartItem &parta: editable_parts){
+        //     std::cout<<"linkages: "<<parta.links_joined<<std::endl;
+        // }
     }
 
     //void check_part_connected
@@ -186,7 +174,7 @@ class EditorScreen: public Screen{
             for(PartItem & p: editable_parts){
                 if(&p == &part) continue;
                 if(does_overlap(p,part)){
-                    TraceLog(LOG_INFO,"OVERLAP");
+                    //TraceLog(LOG_INFO,"OVERLAP");
                     p.color.a = 128;
                     part.color.a = 128;
                     result = true;
@@ -222,10 +210,10 @@ class EditorScreen: public Screen{
         for(auto &part: editable_parts){
             ArrayV2 &points = get_part(part.id);
             ArrayV2 &linkage = linkages.at(part.id);
-            draw_triangle_fan(points, part.position, 0.0, part.scale, part.color);
+            draw_triangle_fan(points, part.position, part.rotation_degree, part.scale, part.color);
             for(size_t i = 0; i<linkage.size(); ++i){
                 Vector2 point = linkage.at(i);
-                point = transform_point(point, part.position, 0.0, part.scale);
+                point = transform_point(point, part.position, part.rotation_degree * DEG2RAD, part.scale);
                 DrawCircleV({point.x, point.y}, 5.0f / camera.zoom, ((part.links_joined>>i)&1)? GREEN : BLUE );
             }
             DrawCircleV(part.position, 5.0f / camera.zoom, RED );
@@ -273,6 +261,12 @@ class EditorScreen: public Screen{
 
     float grid_snap = 0.1f;
     void update_parts(){
+
+        if(rotate_part && part_grabbed){
+            part_grabbed->rotation_degree += GetMouseWheelMove() * 5.0;
+            std::cout<<part_grabbed->rotation_degree<<std::endl;
+        }
+
         // CHECK PART DRAG
         Vector2 point = {0,0}, mouse_pos = get_mouse_pos_world_space(camera);
         bool inside = false, outside = false;
@@ -308,6 +302,7 @@ class EditorScreen: public Screen{
         part_grabbed = nullptr;
         for(auto & part : editable_parts){
             point = mouse_pos - part.position;
+            point = rotate_point(point, -part.rotation_degree * DEG2RAD);
             point = point / part.scale;
 
             if(has_point(get_part(part.id), point)){
@@ -320,10 +315,10 @@ class EditorScreen: public Screen{
 
     void make_vessel(){
         vessel_to_launch.parts = {};
-        vessel_to_launch.engines = {};
-        vessel_to_launch.tanks = {};
+        // vessel_to_launch.engines = {};
+        // vessel_to_launch.tanks = {};
 
-        Vector2 origin;
+        Vector2 origin = {0,0};
         for(PartItem & part : editable_parts) origin += part.position;
         origin /= editable_parts.size();
         
@@ -331,13 +326,13 @@ class EditorScreen: public Screen{
         for(PartItem & part : vessel_to_launch.parts) part.position -= origin;
         TraceLog(LOG_INFO, TextFormat("Origin: %s", to_string(origin).c_str()));
 
-        for(int i = 0; i < vessel_to_launch.parts.size(); ++i){
-            PartItem & part = vessel_to_launch.parts[i];
-            switch (part.type){
-            case PartType::ENGINE: vessel_to_launch.engines.push_back(EnginePart{i}); break;
-            case PartType::TANK: vessel_to_launch.tanks.push_back(FueltankPart{i}); break;
-            }
-        }
+        // for(int i = 0; i < vessel_to_launch.parts.size(); ++i){
+        //     PartItem & part = vessel_to_launch.parts[i];
+        //     switch (part.type){
+        //     case PartType::ENGINE: vessel_to_launch.engines.push_back(EnginePart{i}); break;
+        //     case PartType::TANK: vessel_to_launch.tanks.push_back(FueltankPart{i}); break;
+        //     }
+        // }
 
         calculate_vessel_mass(vessel_to_launch);
         calculate_vessel_inertia(vessel_to_launch);
@@ -389,6 +384,8 @@ public:
             camera.offset = {(float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f};
         }
         if(IsMouseButtonPressed(0)) error_text = "";
+
+        rotate_part =  part_grabbed && IsKeyDown(KEY_R);
 
         update_gui();
         update_parts();

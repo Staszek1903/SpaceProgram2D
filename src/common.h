@@ -47,11 +47,13 @@ struct PartItem
 {
     PartID id;
     Vector2 position = {0.0,0.0};
+    float rotation_degree = 0.0;
     float scale = 1.0;
     Color color = GRAY;//{GRAY.r,GRAY.g,GRAY.b, 128};
     int links_joined = {0};
 
     PartType type = {PartType::NONE};
+    int data_index = {-1};
     int info_index = {-1};
 };
 
@@ -61,15 +63,16 @@ bool operator==(const PartItem & a, const PartItem & b){
 
 struct EngineInfo{
     float max_thrust;
-    float isp;
+    float consumptiom;
     float exhaust_width;
     float exhaust_offset;
+    float gimbal_degrees;
 };
 
 struct EnginePart{
-    int part_item_index = {-1};
-    float throttle = {0};
+    int fuel_tank_index = {-1};
     bool active = {false};
+    float gimbal_state = {0.0};
 };
 
 struct FueltankInfo{
@@ -77,14 +80,13 @@ struct FueltankInfo{
 };
 
 struct FueltankPart{
-    int part_item_index = {-1};
     float fuel_amount = {1.0};
+    int prev_tank_index = {-1};
 };
 
 struct Vessel{
     std::vector<PartItem> parts{};
-    std::vector<EnginePart> engines{};
-    std::vector<FueltankPart> tanks{};
+
     Vector2 position{0.0f,0.0f};
     Vector2 velocity{0.0f,0.0f}; 
     float rotation_deg{0.0f};
@@ -123,10 +125,10 @@ std::vector<int> part_info_index = {
 };
 
 std::vector<float> part_dry_mass = {
+    0.3,
     1.0,
-    1.0,
-    1.0,
-    1.0,
+    0.2,
+    0.2,
     1.0
 };
 
@@ -139,16 +141,16 @@ std::vector<ArrayV2> parts_poly ={
 };
 
 std::vector<ArrayV2> linkages ={
-    {{0.0,0.8}},
-    {{0.0,1.0}, {0.0,-1.0}},
-    {{0.0,-0.6},{0.0,0.6}},
-    {{0.0,-0.2},{0.0,0.2}},
-    {{0.0,0.0}, {0.0,-0.2}},
+    {/*{0.0,0.8}*/},
+    {/*{0.0,1.0},*/ {0.0,-1.1}},
+    {/*{0.0,-0.6},*/{0.0,-0.7}},
+    {/*{0.0,-0.2},*/{0.0,-0.3}},
+    {/*{0.0,0.0},*/ {0.0,-0.3}},
 };
 
 std::vector<EngineInfo> engine_info = {
-    {2.0, 1.0, 0.8, 0.6},
-    {1.0, 1.0, 0.8, 0.2},
+    {8.0, 1.0, 0.8, 0.6, 15.0},
+    {1.0, 0.1, 0.8, 0.2, 15.0},
 };
 
 std::vector<FueltankInfo> fuel_tank_info = {
@@ -281,6 +283,15 @@ std::ostream & operator<<(std::ostream & os, Vector2 v){
     return os;
 }
 
+Vector2 tangent_vector(Vector2 v){
+    return Vector2{-v.y, v.x};
+}
+
+Vector2 project_vector(Vector2 v1, Vector2 v2){
+    Vector2 nv2 = normalized(v2);
+    return nv2 * dot(v1, nv2);
+}
+
 std::string to_string(Vector2 v){
     return ("("+std::to_string(v.x)+","+std::to_string(v.y)+")");
 }
@@ -292,6 +303,35 @@ std::string to_string(Camera2D &camera){
         "\n rotation:"+ std::to_string(camera.rotation)+
         "\n}");
 }
+
+std::string to_string(ArrayV2 &v){
+    std::string s = "ArrayV2: [ ";
+    for(Vector2 &vec: v)
+        s += to_string(vec) + ", ";
+    s += "]";
+    return s;
+}
+
+float sign(float a){
+    return (-1.0 * (a<0.0) + 1.0 * (a>0.0));
+}
+
+// float clamp(float number, float min, float max){
+//     bool bigger = number > max;
+//     bool lesser = number < min;
+//     return ( bigger * max + lesser * min + (!bigger && ! lesser) * number);
+// }
+
+// void test_clamp(){
+//     assert(clamp(0.123, -1, 1) == 0.123);
+//     assert(clamp(-3.1, -1, 1) == -1.0);
+//     assert(clamp(123, -1, 1) == 1);
+// }
+
+// float lerp(float from, float to, float amount){
+//     amount = clamp(amount, 0.0, 1.0);
+//     return (from + (to - from) * amount);
+// }
 
 void draw_triangle_fan(ArrayV2 & vect, Vector2 pos = {0,0}, float rot = 0.0, float scale = 1.0, Color color = BLACK){
     size_t size = vect.size();
@@ -450,7 +490,7 @@ void test_point_penetration(){
 
     result = point_penetration(a,b,p+n);
     assert(result < 1.001 && result > 0.999);
-
+ 
     result = point_penetration(a,b,p-n);
     assert(result < -0.999 && result > -1.001);
 }
@@ -461,11 +501,11 @@ float deepest_line_penetration(Vector2 a, Vector2 b, const PartItem &p, size_t *
     float deepest_penetration = std::numeric_limits<float>::lowest();
     Vector2 point;
     for(size_t i = 0; i<vsize; ++i){
-        point = transform_point(v.at(i), p.position, 0.0, p.scale);
+        point = transform_point(v.at(i), p.position, p.rotation_degree * DEG2RAD, p.scale);
         float penetration = point_penetration(b,a, point);
         if(penetration > deepest_penetration){
             deepest_penetration = penetration;
-            if(index) *index = i;
+            if(index) *index = i; 
         }
     }
     return deepest_penetration;
@@ -499,8 +539,8 @@ bool does_overlap(PartItem &p1, PartItem &p2){//const ArrayV2 &v1, const ArrayV2
     for(size_t i=0; i<v1size; ++i){
         a = v1.at(i);
         b = v1.at((i+1)%v1size);
-        a = transform_point(a, p1.position, 0.0, p1.scale);
-        b = transform_point(b, p1.position, 0.0, p1.scale);
+        a = transform_point(a, p1.position, p1.rotation_degree * DEG2RAD, p1.scale);
+        b = transform_point(b, p1.position, p1.rotation_degree * DEG2RAD, p1.scale);
         float penetration = deepest_line_penetration(a,b, p2);
 
         //std::cout<<" "<<penetration;
@@ -510,8 +550,8 @@ bool does_overlap(PartItem &p1, PartItem &p2){//const ArrayV2 &v1, const ArrayV2
     for(size_t i=0; i<v2size; ++i){
         a = v2.at(i);
         b = v2.at((i+1)%v2size);
-        a = transform_point(a, p2.position, 0.0, p2.scale);
-        b = transform_point(b, p2.position, 0.0, p2.scale);
+        a = transform_point(a, p2.position, p2.rotation_degree * DEG2RAD, p2.scale);
+        b = transform_point(b, p2.position, p2.rotation_degree * DEG2RAD, p2.scale);
         float penetration = deepest_line_penetration(a,b, p1);
 
         //std::cout<<" "<<penetration;
@@ -532,7 +572,7 @@ struct CollisionInfo{
 bool part_circle_collision(ArrayV2 &v, Vector2 position, float rotation_deg, float scale, Vector2 c_center, float c_radius, CollisionInfo & info){
     float rotation = DEG2RAD * rotation_deg;
     Vector2 t_center = c_center - position;         // reverse transform order into model space, tranlsate firstly
-    t_center = rotate_point(t_center, -rotation);   // ten rotate
+    t_center = rotate_point(t_center, -rotation);   // then rotate
     t_center /= scale;                              // scale lastly 
 
     float t_radius = c_radius / scale;
@@ -568,7 +608,7 @@ bool vessel_circle_collision(Vessel &vessel, Vector2 c_center, float c_radius, C
     for(auto &part: vessel.parts){
         ArrayV2 &v = get_part(part.id);
         Vector2 position = rotate_point(part.position, DEG2RAD * vessel.rotation_deg) + vessel.position;
-        if(part_circle_collision(v, position, vessel.rotation_deg, part.scale, c_center, c_radius, temp_info)){
+        if(part_circle_collision(v, position, vessel.rotation_deg + part.rotation_degree, part.scale, c_center, c_radius, temp_info)){
             // info = temp_info;
             // info.collision_point += rotate_point(part.position, DEG2RAD * vessel.rotation_deg);
             // return true;
@@ -588,8 +628,8 @@ void draw_vessel(std::vector<PartItem> &parts, Vector2 position, float rotation)
         ArrayV2 &vertices = get_part(part.id);
         Vector2 part_pos = rotate_point(part.position, DEG2RAD * rotation) + position;
         
-        draw_triangle_fan(vertices, part_pos, rotation, part.scale, DARKBLUE);
-        draw_triangle_fan(vertices, part_pos, rotation, part.scale*0.9, part.color);
+        draw_triangle_fan(vertices, part_pos, rotation + part.rotation_degree, part.scale, DARKBLUE);
+        draw_triangle_fan(vertices, part_pos, rotation + part.rotation_degree, part.scale*0.9, part.color);
     }
 }
 
@@ -614,6 +654,9 @@ void get_point_pair(Vector2 &a, Vector2 &b, Vector2 pos, float width){
     b.x += width * 0.5;
 }
 
+float sinus_random = 5.454;
+float& get_sin_random(){ std::cout<<"sin rand: "<<sinus_random<< "\n"; return sinus_random; }
+
 void draw_exhaust(Vector2 pos, float rot, float width, float lenght, float cone = 1.0){
     int steps = 10;
     float step_lenght = lenght / float(steps);
@@ -624,20 +667,20 @@ void draw_exhaust(Vector2 pos, float rot, float width, float lenght, float cone 
     float distortion = 0.0;
     static int distortion_offset = 0;
     distortion_offset = (distortion_offset+1)%1000;
-    get_point_pair(prev_a, prev_b, pos, width);
+    get_point_pair(prev_a, prev_b, {0,0}, width);
 
     rlPushMatrix();
-    //rlTranslatef(pos.x,pos.y,0);
+    rlTranslatef(pos.x,pos.y,0);
     rlRotatef(rot, 0,0,1);
-    //rlScalef(scale,scale,0);
     rlBegin(RL_TRIANGLES);
     
+    float y = 0.0;
     for(int i=0; i<steps; ++i){
         color.a = 255 * ((float) (steps - i - 1) / (float) steps);
-        distortion = std::sin((pos.y+(float)distortion_offset) * 123456789.0) * 0.05;
-        pos.y += step_lenght;
+        distortion = std::sin((y+(float)distortion_offset) * sinus_random) * 0.05;
+        y += step_lenght;
         width *= cone;
-        get_point_pair(a, b, pos, width);
+        get_point_pair(a, b, {0.0,y}, width);
         a.x -= distortion;
         b.x += distortion;
 
@@ -722,12 +765,12 @@ void adjust_parts_centroids(){
         Vector2 c = get_centroid(a);
         for(Vector2 & v: a){
             v -= c;
-            v = Vector2{round(v.x/prec), round(v.y/prec)} * prec;
+            v = Vector2{float(round(v.x/prec)), float(round(v.y/prec))} * prec;
         }
         ArrayV2 & links = linkages.at(i);
         for(Vector2 & l: links){
             l -= c;
-            l = Vector2{round(l.x/prec), round(l.y/prec)} * prec;
+            l = Vector2{float(round(l.x/prec)), float(round(l.y/prec))} * prec;
         }
     }
 }
@@ -736,6 +779,11 @@ void calculate_vessel_mass(Vessel &vessel){
     vessel.mass = 0.0;
     for(PartItem &item: vessel.parts){
         vessel.mass += part_dry_mass[item.id];
+    }
+
+    if(vessel.mass < 0.0001 || vessel.mass > 1e9){
+        TraceLog(LOG_INFO, "MASS CALCULATION RESULT ABNORMAL");
+        assert(false);
     }
 }
 
@@ -763,11 +811,50 @@ void calculate_vessel_inertia(Vessel &vessel){
         float distsq = lensq(offset);
         vessel.inertia += inertia + vessel.mass*distsq; // Parallel axis theorem
     }
+
+    if(vessel.inertia < 0.0001 || vessel.inertia > 1e9){
+        TraceLog(LOG_INFO, "INERTIA CALCULATION RESULT ABNORMAL");
+        assert(false);
+    }
 }
 
-float sign(float a){
-    return (-1.0 * (a<0.0) + 1.0 * (a>0.0));
+bool check_linkage(PartItem &a, PartItem &b){
+    ArrayV2 &la = linkages.at(a.id);
+    ArrayV2 &lb = linkages.at(b.id);
+    ArrayV2 &va = parts_poly.at(a.id);
+    ArrayV2 &vb = parts_poly.at(b.id);
+
+    for(size_t i=0; i<la.size(); ++i){
+        Vector2 lp = la.at(i);
+        lp = transform_point(lp, a.position, a.rotation_degree * DEG2RAD, a.scale);
+        //lp = transform_point(lp, -b.position, -b.rotation_degree * DEG2RAD, b.scale);
+        lp -= b.position;
+        lp = rotate_point(lp, -b.rotation_degree * DEG2RAD);
+        lp *= 1.0f/b.scale;
+
+        if(has_point(vb,lp)){
+            a.links_joined = a.links_joined | ((1<<i));
+            return true;
+        }
+    }
+
+    for(size_t i=0; i<lb.size(); ++i){
+        Vector2 lp = lb.at(i);
+        lp = transform_point(lp, b.position, b.rotation_degree * DEG2RAD, b.scale);
+        //lp = transform_point(lp, -a.position, -a.rotation_degree * DEG2RAD, a.scale);
+        lp -= a.position;
+        lp = rotate_point(lp, -a.rotation_degree * DEG2RAD);
+        lp *= 1.0f/a.scale;
+        std::cout<<to_string(lp)<<"\n"<<to_string(la)<<std::endl;
+        if(has_point(va,lp)){
+            b.links_joined = b.links_joined | ((1<<i));
+            return true;
+        }
+    }
+
+    return false;
 }
+
 
 //offset and force are given in world space with origin at vessel position
 void add_force(Vessel &vessel, Vector2 force, Vector2 offset){
@@ -779,7 +866,7 @@ void add_force(Vessel &vessel, Vector2 force, Vector2 offset){
 
     //add rotational force
     Vector2 force_normal = normalized(force);
-    Vector2 projected_offset = force_normal * dot(offset, force_normal);
+    Vector2 projected_offset = project_vector(offset, force);
     Vector2 tangent_offset = offset - projected_offset;
     float offcenter = len(tangent_offset) * sign(cross(tangent_offset, force_normal));
 

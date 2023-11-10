@@ -8,6 +8,7 @@ void tests(){
     test_eccentric_anomaly();
     test_get_centroid();
     test_polygon_area();
+    // test_clamp();
 }
 
 
@@ -32,8 +33,6 @@ int main()
     bool pause = false;
 
 
-
-
     tests();
 
     adjust_parts_centroids();
@@ -45,6 +44,7 @@ int main()
 
     // TraceLog(LOG_INFO, TextFormat("int: %d long: %d long long: %d long long int: %d",
     //                         sizeof(int), sizeof(long), sizeof(long long), sizeof(long long int)));
+
 
 
     screens[current_screen]->init(); 
@@ -63,23 +63,6 @@ int main()
     CloseWindow();                 
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
