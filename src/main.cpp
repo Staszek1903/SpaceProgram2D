@@ -15,6 +15,7 @@ void tests(){
 
 int main()
 {
+    SetTraceLogLevel(LOG_ALL);
     EditorScreen editor_screen;
     FlightScreen flight_screen;
     std::vector<Screen*> screens = {
@@ -36,6 +37,7 @@ int main()
     tests();
 
     adjust_parts_centroids();
+    calculate_broadphase_radiuses();
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(screenWidth, screenHeight, "KSP");        
@@ -63,6 +65,21 @@ int main()
     CloseWindow();                 
     return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

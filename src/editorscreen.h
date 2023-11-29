@@ -208,7 +208,7 @@ class EditorScreen: public Screen{
 
     void draw_editable_parts(){
         for(auto &part: editable_parts){
-            ArrayV2 &points = get_part(part.id);
+            ArrayV2 &points = get_polygon(part.id);
             ArrayV2 &linkage = linkages.at(part.id);
             draw_triangle_fan(points, part.position, part.rotation_degree, part.scale, part.color);
             for(size_t i = 0; i<linkage.size(); ++i){
@@ -223,7 +223,7 @@ class EditorScreen: public Screen{
     }
 
     bool is_in_editor_area(PartItem &part){
-        ArrayV2 &p = get_part(part.id);
+        ArrayV2 &p = get_polygon(part.id);
         for(Vector2 v: p){
             v = transform_point(v, part.position, 0.0, part.scale);
             if(!CheckCollisionPointRec(v,editor_area)) return false;
@@ -232,7 +232,7 @@ class EditorScreen: public Screen{
     }
 
     bool is_outside_editor_area(PartItem &part){
-        ArrayV2 &p = get_part(part.id);
+        ArrayV2 &p = get_polygon(part.id);
         for(Vector2 v: p){
             v = transform_point(v, part.position, 0.0, part.scale);
             if(CheckCollisionPointRec(v,editor_area)) return false;
@@ -241,7 +241,7 @@ class EditorScreen: public Screen{
     }
 
     void editor_area_check(PartItem &part, bool &inside, bool &outside){
-        ArrayV2 &p = get_part(part.id);
+        ArrayV2 &p = get_polygon(part.id);
         inside = true;
         outside = true;
         for(Vector2 v: p){
@@ -305,7 +305,7 @@ class EditorScreen: public Screen{
             point = rotate_point(point, -part.rotation_degree * DEG2RAD);
             point = point / part.scale;
 
-            if(has_point(get_part(part.id), point)){
+            if(has_point(get_polygon(part.id), point)){
                 part_grabbed = &part;
                 prev_part_pos = part_grabbed->position;
             }
@@ -314,28 +314,14 @@ class EditorScreen: public Screen{
     }
 
     void make_vessel(){
-        vessel_to_launch.parts = {};
-        // vessel_to_launch.engines = {};
-        // vessel_to_launch.tanks = {};
-
-        Vector2 origin = {0,0};
-        for(PartItem & part : editable_parts) origin += part.position;
-        origin /= editable_parts.size();
-        
         vessel_to_launch.parts = editable_parts;
-        for(PartItem & part : vessel_to_launch.parts) part.position -= origin;
-        TraceLog(LOG_INFO, TextFormat("Origin: %s", to_string(origin).c_str()));
+        
+        //TraceLog(LOG_INFO, TextFormat("Origin: %s", to_string(origin).c_str()));
 
-        // for(int i = 0; i < vessel_to_launch.parts.size(); ++i){
-        //     PartItem & part = vessel_to_launch.parts[i];
-        //     switch (part.type){
-        //     case PartType::ENGINE: vessel_to_launch.engines.push_back(EnginePart{i}); break;
-        //     case PartType::TANK: vessel_to_launch.tanks.push_back(FueltankPart{i}); break;
-        //     }
-        // }
-
+        update_vessel_origin(vessel_to_launch);
         calculate_vessel_mass(vessel_to_launch);
         calculate_vessel_inertia(vessel_to_launch);
+        calculate_vessel_broadphase_radius(vessel_to_launch);
     }
 
 public:

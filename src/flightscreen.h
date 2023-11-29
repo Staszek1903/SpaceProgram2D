@@ -7,39 +7,59 @@
 struct VesselsPartsData{
     std::vector<EnginePart> engines{};
     std::vector<FueltankPart> tanks{};
+
+    EnginePart &get_engine(size_t index){
+        assert(index >=0 && index < engines.size());
+        return engines.at(index);
+    }
+
+    FueltankPart &get_tank(size_t index){
+        assert(index >=0 && index < tanks.size());
+        return tanks.at(index);
+    }
 };
 
 class FlightScreen: public Screen{
-    Vessel current_vessel;
+    std::vector<Vessel> vessels;
+    int active_vessel_index = 0;
     Camera2D camera = {{screenWidth*0.5, screenHeight*0.5}, {0.0, 0.0}, 0, 40.0f};
-    VesselsPartsData vessels_parts_data;
-    
-    float earth_radius = 5000.0f;
-    float gravity_magnitude = 50000000.0f;
-    float apoapsis = 0.0;
-    float periapsis = 0.0f;
-    float eccentricity = 0.0;
-    float orbital_period = 0.0;
-    float peri_argument = 0.0;
-    float sm_axis = 0.0;
-    float anomaly = 0.0;
-    float mean_anomaly = 0.0;
-    float time_to_peri = 0.0;
-    float time_to_apo = 0.0;
+    VesselsPartsData parts_data;
+    CelestialBody earth {5000.0f, 50000000.0f};
 
     float throttle = 0.0;
 
     CollisionInfo collision_info;
+    int warp = 0;
+
+    // DO NOT ERASE DATA BCUS IT SEVERS ALL INDEXES IN PART ITEM
+    // MARK AS EMPT SOMEHOW AND OVERWRITE WHEN CERATING NEXT PART INSTEAD
+    // void remove_part_data(PartItem &item){
+    //     switch (item.type)
+    //     {
+    //     case ENGINE:
+    //         parts_data.engines.erase(parts_data.engines.begin() + item.data_index);
+    //         break;
+    //     case TANK:
+    //         parts_data.tanks.erase(parts_data.tanks.begin() + item.data_index);
+    //     default:
+    //         break;
+    //     }
+    // }
+
+    Vessel& get_active_vessel(){
+        assert(active_vessel_index >= 0 && active_vessel_index < vessels.size());
+        return vessels.at(active_vessel_index);
+    }
 
     void update_engines(Vessel & vessel, float dt){
         for(PartItem &item: vessel.parts){
             if(item.type != PartType::ENGINE) continue;
-            EnginePart &engine = vessels_parts_data.engines.at(item.data_index);
-            EngineInfo &info = engine_info[item.info_index];
+            EnginePart &engine = parts_data.get_engine(item.data_index);
+            EngineInfo &info = engine_info.at(item.info_index);
             if(engine.fuel_tank_index < 0) continue;;
 
             PartItem &tank_part = vessel.parts.at(engine.fuel_tank_index);
-            FueltankPart &tank_data = vessels_parts_data.tanks.at(tank_part.data_index);
+            FueltankPart &tank_data = parts_data.get_tank(tank_part.data_index);
             FueltankInfo &tank_info = fuel_tank_info.at(tank_part.info_index);
 
             if(tank_data.fuel_amount < 0.0 || !engine.active){
@@ -58,15 +78,15 @@ class FlightScreen: public Screen{
                 assert(false);
             }
 
-            add_force(vessel, force_normal * info.max_thrust * throttle * dt / vessel.mass, offset);
+            add_force(vessel, force_normal * info.max_thrust * vessel.throttle * dt / vessel.mass, offset);
         }
     }
 
     void engines_gimbal(Vessel &vessel, float input, float dt){
         for(PartItem &item: vessel.parts){
             if(item.type != PartType::ENGINE) continue;
-            EnginePart &engine = vessels_parts_data.engines.at(item.data_index);
-            EngineInfo &info = engine_info[item.info_index];
+            EnginePart &engine = parts_data.get_engine(item.data_index);
+            EngineInfo &info = engine_info.at(item.info_index);
 
             float prev_gimbal_state = engine.gimbal_state;
             engine.gimbal_state = std::lerp(engine.gimbal_state, input,  dt*2.0);
@@ -79,12 +99,12 @@ class FlightScreen: public Screen{
     void update_tanks(Vessel &vessel){
         for(PartItem &item: vessel.parts){
             if(item.type != PartType::TANK) continue;
-            FueltankPart &part = vessels_parts_data.tanks.at(item.data_index);
+            FueltankPart &part = parts_data.get_tank(item.data_index);
             FueltankInfo &info = fuel_tank_info.at(item.info_index);
             
             if(part.prev_tank_index < 0) continue;
             PartItem &item2 = vessel.parts.at(part.prev_tank_index);
-            FueltankPart &part2 = vessels_parts_data.tanks.at(item2.data_index);
+            FueltankPart &part2 = parts_data.get_tank(item2.data_index);
             FueltankInfo &info2 = fuel_tank_info.at(item.info_index);
 
             float missing_fuel = (1.0 - part.fuel_amount) * info.capacity;
@@ -97,103 +117,121 @@ class FlightScreen: public Screen{
         }
     }
 
-    void update_vessel(Vessel & vessel){
-        float dt = GetFrameTime();
-
-        if(vessel.inertia < 0.0001){
-                TraceLog(LOG_INFO, "VESSEL HAS NO INERTIA");
-                assert(false);
-            }
-
+    const float REACTION_WHEELS_FORCE = 200.0f;
+    void vessel_input(Vessel &vessel, float dt){
         if(IsKeyDown(KEY_I)) get_sin_random() += dt;
         if(IsKeyDown(KEY_K)) get_sin_random() -= dt;
         float gimbal = 0.0;
         if(IsKeyDown(KEY_D)){
-            //current_vessel.angular_vel_deg += 10.0/current_vessel.inertia;
             gimbal = -1.0;
         }
         if(IsKeyDown(KEY_A)){
-            //current_vessel.angular_vel_deg -= 10.0/current_vessel.inertia;
+
             gimbal = 1.0;
         }
         if(IsKeyPressed(KEY_SPACE)){
-            for(EnginePart &engine: vessels_parts_data.engines)
+            for(EnginePart &engine: parts_data.engines)
                 engine.active = true;
         }
-        engines_gimbal(current_vessel, gimbal, dt);
+        engines_gimbal(vessel, gimbal, dt);
+        vessel.angular_vel_deg -= gimbal * REACTION_WHEELS_FORCE * dt / vessel.inertia;
+    }
 
-        //std::cout<<current_vessel.inertia<<std::endl;
+    void update_vessel(Vessel & vessel, float dt){
+        if(vessel.inertia < 0.0001){
+                TraceLog(LOG_INFO, "VESSEL HAS NO INERTIA");
+                assert(false);
+            }
         
         update_engines(vessel, dt);
         update_tanks(vessel);
-        // current_vessel.velocity += Vector2{
-        //     std::cos( DEG2RAD * (current_vessel.rotation_deg - 90.0f) ),
-        //     std::sin( DEG2RAD * (current_vessel.rotation_deg - 90.0f) )
-        //     } * 0.03f * throttle;
 
         float radiussq = lensq(vessel.position);
-        Vector2 gravity = -normalized(vessel.position) * gravity_magnitude / radiussq;
+        Vector2 gravity = -normalized(vessel.position) * earth.gravity / radiussq;
         vessel.velocity += gravity*dt;
         vessel.position += vessel.velocity*dt;
         vessel.rotation_deg += vessel.angular_vel_deg*dt;
        // vessel.angular_vel_deg *= (1.0f-dt); //DAMPING
 
-        //COLLISTION
+    }
+
+    void planet_collision(Vessel &vessel, CelestialBody &planet){
+        CollisionInfo info;
+        Vector2 planet_center = {0,0};
         float bouncyness = 0.0;
         float friction = 0.1;
-        if( vessel_circle_collision(current_vessel, {0,0}, earth_radius, collision_info) )
-        // (get_part(current_vessel.parts.at(0).id), 
-        //     current_vessel.position, current_vessel.rotation_deg,
-        //     1.0, {0,0}, earth_radius, collision_info))
+        if( vessel_circle_collision(vessel, planet_center, earth.radius, info) )
         {
-                vessel.position -= collision_info.normal * collision_info.penetration;
-                Vector2 normal_tangent = tangent_vector(collision_info.normal);
-
-                float point_lin_vel = vessel.angular_vel_deg * DEG2RAD * len(collision_info.collision_point);
-                Vector2 point_vel_normal = normalized(tangent_vector(collision_info.collision_point));
-                Vector2 point_velocity = vessel.velocity + (point_vel_normal * point_lin_vel);
-
-                float normal_velocity = dot(point_velocity, collision_info.normal);
+                collision_position_correction(vessel, info);
+                Vector2 normal_tangent = tangent_vector(info.normal);
+                Vector2 point_velocity = get_point_velocity(vessel, info.collision_point);
+                float normal_velocity = dot(point_velocity, info.normal);
                 float tangent_velocity = dot(point_velocity, normal_tangent);
 
-                add_force(current_vessel, collision_info.normal * -normal_velocity * vessel.mass * (1.0+bouncyness), collision_info.collision_point);
-                add_force(current_vessel, normal_tangent * -tangent_velocity * vessel.mass * friction, collision_info.collision_point);
-                //vessel.velocity -= collision_info.normal * dot(vessel.velocity, collision_info.normal);
+                add_force(vessel, info.normal * -normal_velocity * vessel.mass * (1.0+bouncyness), info.collision_point);
+                add_force(vessel, normal_tangent * -tangent_velocity * vessel.mass * friction, info.collision_point);
+                //vessel.velocity -= info.normal * dot(vessel.velocity, info.normal);
                 //vessel.velocity *= 0.99;
         }
     }
 
-    void update_telemetry(){
-        float velsq = lensq(current_vessel.velocity);
-        float radius = len(current_vessel.position);       
-        //float angular_momentum = cross(current_vessel.position, current_vessel.velocity);
+    void vessel2vessel_collision(Vessel& vessel, Vessel &other){
+        //CollisionInfo info;
+        float bouncyness = 0.0;
+        float friction = 0.1;
+        if(vessel_broadphase_collision(vessel, other) && vessel_vessel_collision(vessel, other, collision_info)){
+            collision_position_correction(vessel, other, collision_info);
 
-        Vector2 eccentricity_vect = (current_vessel.position * (velsq - gravity_magnitude/radius) - 
-            current_vessel.velocity*dot(current_vessel.velocity,current_vessel.position)) /
-            gravity_magnitude;
+            Vector2 v_point = collision_info.collision_point;
+            Vector2 o_point = collision_info.collision_point - (other.position - vessel.position);
+            Vector2 v_point_velocity = get_point_velocity(vessel, v_point);
+            Vector2 o_point_velocity = get_point_velocity(other, o_point);
+            Vector2 collision_velocity = v_point_velocity - o_point_velocity;
+            float normal_velocity = dot(collision_velocity, collision_info.normal) * 0.5;
+            Vector2 normal_tangent = tangent_vector(collision_info.normal);
+            float tangent_velocity = dot(collision_velocity, normal_tangent);
 
-        eccentricity = len(eccentricity_vect);
+            float force_aplied = normal_velocity * vessel.mass;
+            TraceLog(LOG_DEBUG, "collision force: %f", force_aplied);
+            if(force_aplied > 2.0 || force_aplied < -2.0) 
+                TraceLog(LOG_DEBUG, "collision_velocity: %s", to_string(collision_velocity).c_str());
+
+            add_force(vessel, -collision_info.normal * force_aplied * (1.0+bouncyness), v_point);
+            add_force(vessel, -normal_tangent * tangent_velocity * vessel.mass * friction, v_point);
+        }
+    }
+
+    void update_telemetry(Vessel &vessel, CelestialBody &body, OrbitalElemets &elements){
+        float velsq = lensq(vessel.velocity);
+        float radius = len(vessel.position);       
+        //float angular_momentum = cross(vessel.position, vessel.velocity);
+
+        Vector2 eccentricity_vect = (vessel.position * (velsq - earth.gravity/radius) - 
+            vessel.velocity*dot(vessel.velocity,vessel.position)) /
+            earth.gravity;
+
+        elements.eccentricity = len(eccentricity_vect);
 
  
 
-        float E = velsq/2.0f - gravity_magnitude/radius;
-        sm_axis = -gravity_magnitude/(2*E);
+        float E = velsq/2.0f - earth.gravity/radius;
+        elements.sm_axis = -earth.gravity/(2*E);
 
-        apoapsis = sm_axis*(1+eccentricity);
-        periapsis = sm_axis*(1-eccentricity);
+        elements.apoapsis = elements.sm_axis*(1+elements.eccentricity);
+        elements.periapsis = elements.sm_axis*(1-elements.eccentricity);
 
-        orbital_period = 2*PI* sqrt(sm_axis*sm_axis*sm_axis / gravity_magnitude);
-        peri_argument = std::atan2(eccentricity_vect.y, eccentricity_vect.x);
+        elements.orbital_period = 2*PI* sqrt(elements.sm_axis*elements.sm_axis*elements.sm_axis / earth.gravity);
+        elements.peri_argument = std::atan2(eccentricity_vect.y, eccentricity_vect.x);
 
-        float vessel_argument = std::atan2(current_vessel.position.y, current_vessel.position.x);
-        anomaly = vessel_argument - peri_argument;
-        anomaly += (anomaly < 0.0) * 2*PI; // normalize anomaly [0, 2PI]
-        mean_anomaly = anomaly - eccentricity * std::sin(anomaly);
-        time_to_peri = orbital_period - orbital_period * (mean_anomaly/(2*PI));
+        float vessel_argument = std::atan2(vessel.position.y, vessel.position.x);
+        elements.anomaly = vessel_argument - elements.peri_argument;
+        elements.anomaly += (elements.anomaly < 0.0) * 2*PI; // normalize anomaly [0, 2PI]
+        elements.mean_anomaly = elements.anomaly - elements.eccentricity * std::sin(elements.anomaly);
+        elements.time_to_peri = elements.orbital_period - elements.orbital_period * (elements.mean_anomaly/(2*PI));
 
-        float oposite_anomaly = mean_anomaly - PI;
+        float oposite_anomaly = elements.mean_anomaly - PI;
         oposite_anomaly += 2*PI * (oposite_anomaly<0.0f);
-        time_to_apo = orbital_period - orbital_period * (oposite_anomaly/(2*PI));
+        elements.time_to_apo = elements.orbital_period - elements.orbital_period * (oposite_anomaly/(2*PI));
     }
 
     void update_throttle(){
@@ -203,6 +241,102 @@ class FlightScreen: public Screen{
         if(throttle < 0.0f) throttle = 0.0f;
         if(IsKeyPressed(KEY_Z)) throttle = 1.0f;
         if(IsKeyPressed(KEY_X)) throttle = 0.0f;
+    }
+
+    void get_next_stage_indices(std::vector<bool> &next_stage, Vessel &vessel, PartItem &item){
+        std::vector<size_t> to_check;
+        to_check.reserve(vessel.parts.size());
+        next_stage.clear();
+        next_stage.resize(vessel.parts.size());
+
+        int stage_first_index = find_atached_part(vessel, item);
+        to_check.push_back(stage_first_index); 
+        next_stage.at(stage_first_index) = true; 
+
+        const int guard = 10000;
+        for(int guard_counter = 0; to_check.size() > 0 && guard_counter < guard; ++guard_counter)
+        {
+            size_t check_item_index = to_check.back();
+            PartItem &check_item = vessel.parts.at(check_item_index);
+            to_check.pop_back();
+            for(size_t i = 0; i<vessel.parts.size(); ++i){
+                PartItem &next_item = vessel.parts.at(i);
+                if(&item != &next_item &&
+                    check_linkage(check_item, next_item) &&
+                    !next_stage.at(i)){
+                        to_check.push_back(i);
+                        next_stage.at(i) = true;
+                }
+            }
+        }
+    }
+
+    void stage_separation(Vessel &vessel, PartItem &item){
+        if(item.type != PartType::SEPARATE) return;
+        std::vector<bool> next_stage;
+        get_next_stage_indices(next_stage, vessel, item);
+
+        // vessels.push_back(Vessel());
+        // Vessel & debris = vessels.back();
+        // debris = vessel;
+
+        std::vector <PartItem> vessel_parts;
+        //std::vector <PartItem> debris_parts;
+        vessel_parts.reserve(next_stage.size());
+       // debris_parts.reserve(next_stage.size());
+        for(size_t i =0; i<next_stage.size(); ++i)
+            if(next_stage.at(i))vessel_parts.push_back(vessel.parts.at(i));
+           // else debris_parts.push_back(vessel.parts.at(i));
+        vessel.parts = std::move(vessel_parts);
+        //debris.parts = std::move(debris_parts);
+        
+        Vector2 old_pos = vessel.parts.at(0).position;
+        update_vessel_origin(vessel);
+        Vector2 new_pos = vessel.parts.at(0).position;
+        vessel.position += (old_pos - new_pos);
+        calculate_vessel_mass(vessel);
+        calculate_vessel_inertia(vessel);
+        calculate_vessel_broadphase_radius(vessel);
+
+        // old_pos = debris.parts.at(0).position;
+        // update_vessel_origin(debris);
+        // new_pos = debris.parts.at(0).position;
+        // debris.position += (new_pos - old_pos);
+        // calculate_vessel_mass(debris);
+        // calculate_vessel_inertia(debris);
+        // calculate_vessel_broadphase_radius(debris);
+    }
+
+    void update_click_action(Vessel &vessel){
+        if(!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
+        Vector2 mouse_pos = get_mouse_pos_world_space(camera);
+        //TraceLog(LOG_INFO, TextFormat("CLICKED %s", to_string(mouse_pos).c_str()));
+        mouse_pos = rotate_point(mouse_pos, -vessel.rotation_deg * DEG2RAD);
+
+        for(PartItem &item: vessel.parts){
+            Vector2 trans_mouse = mouse_pos - item.position;
+            trans_mouse = rotate_point(trans_mouse, -item.rotation_degree * DEG2RAD);
+            trans_mouse /= item.scale;
+            if(has_point(get_polygon(item.id), trans_mouse)){
+                TraceLog(LOG_INFO, TextFormat("clicked type: %d", item.type));
+                switch (item.type)
+                {
+                case PartType::ENGINE:
+                    {
+                        EnginePart &engine = parts_data.get_engine(item.data_index);
+                        engine.active = !engine.active;
+                    }
+                    break;
+                
+                case PartType::SEPARATE:
+                    stage_separation(vessel, item);
+                    return;
+                
+                default:
+                    break;
+                }
+            }
+        }
     }
 
     void draw_throttle(){
@@ -217,72 +351,51 @@ class FlightScreen: public Screen{
         DrawRectangle(x_pos - w, guage_h -5, w*2, 10, {0,0,0,100});
     }
 
-    void draw_ship(){
-        draw_vessel(current_vessel.parts, {0,0}, current_vessel.rotation_deg);
-        //std::cout<<current_vessel.rotation_deg<<std::endl;
-
-        for(PartItem &item : current_vessel.parts){
-            switch (item.type)
-            {
-            case PartType::TANK:
-            {
-                FueltankPart &tank = vessels_parts_data.tanks.at(item.data_index);
-                Vector2 position = transform_point(item.position, {0,0}, DEG2RAD * current_vessel.rotation_deg);
-                DrawCircleSector(position, 0.35, 0, 360.0f * tank.fuel_amount , 16, GREEN);
-                //tank.fuel_amount -= 0.001;
-                
-            }
-            break;
-            
-            case  PartType::ENGINE:
-            {
-                EnginePart &engine = vessels_parts_data.engines.at(item.data_index);
-                if(!engine.active) continue;
-                EngineInfo info = engine_info.at(item.info_index);
-                Vector2 exhaust_pos = rotate_point(item.position, current_vessel.rotation_deg * DEG2RAD);
-                exhaust_pos += rotate_point({0, info.exhaust_offset}, (current_vessel.rotation_deg + item.rotation_degree) * DEG2RAD);
-                draw_exhaust(exhaust_pos, current_vessel.rotation_deg + item.rotation_degree, info.exhaust_width, 2.0 * throttle, 1.1 );
-            }
-            break;
-
-            case PartType::NONE: break;
-
-            default:
-                TraceLog(LOG_INFO, TextFormat("ERROR: Unknown part type: %s", std::to_string((int)item.type).c_str()));
-                assert(false);
-                break;
-            }
+    void draw_exhausts(Vessel &vessel, Vector2 active_pos){
+        for(PartItem &item : vessel.parts){
+            if(item.type != PartType::ENGINE) continue;
+            EnginePart &engine = parts_data.get_engine(item.data_index);
+            if(!engine.active) continue;
+            EngineInfo info = engine_info.at(item.info_index);
+            Vector2 exhaust_pos = rotate_point(item.position, vessel.rotation_deg * DEG2RAD);
+            exhaust_pos += rotate_point({0, info.exhaust_offset}, (vessel.rotation_deg + item.rotation_degree) * DEG2RAD);
+            exhaust_pos += vessel.position - active_pos;
+            draw_exhaust(exhaust_pos, vessel.rotation_deg + item.rotation_degree, info.exhaust_width, 2.0 * vessel.throttle, 1.0 );
         }
-
-        // for(FueltankPart & part: vessels_parts_data.tanks){
-        //     PartItem item = current_vessel.parts[part.part_item_index];
-        //     Vector2 position = transform_point(item.position, {0,0}, DEG2RAD * current_vessel.rotation_deg);
-        //     DrawCircleSector(position, 0.35, 0, 360.0f * part.fuel_amount , 16, GREEN);
-        //     part.fuel_amount -= 0.001;
-        // }
-
-        // for(EnginePart & part: current_vessel.engines){
-        //     if(!part.active) continue;
-        //     PartItem item = current_vessel.parts[part.f];
-        //     EngineInfo info = engine_info[item.info_index];
-        //     Vector2 exhaust_pos = item.position;
-        //     exhaust_pos.y += info.exhaust_offset;
-        //     draw_exhaust(exhaust_pos, current_vessel.rotation_deg, info.exhaust_width, 2.0 * throttle, 1.1 );
-        // }
     }
 
-    void draw_planet(){
-        DrawCircleSector(-current_vessel.position, earth_radius, 0, 360,64, BROWN);
+    void draw_tank_guages(Vessel &vessel){
+        for(PartItem &item : vessel.parts){
+            if(item.type != PartType::TANK) continue;
+            FueltankPart &tank = parts_data.get_tank(item.data_index);
+            Vector2 position = transform_point(item.position, {0,0}, DEG2RAD * vessel.rotation_deg);
+            DrawCircleSector(position, 0.35, 0, 360.0f * tank.fuel_amount , 16, GREEN);
+            //tank.fuel_amount -= 0.001;
+
+            // case PartType::NONE: break;
+            // case PartType::SEPARATE: break;
+            // case PartType::LIFE_SUPPORT: break;
+
+            // default:
+            //     TraceLog(LOG_INFO, TextFormat("ERROR: Unknown part type: %s", std::to_string((int)item.type).c_str()));
+            //     assert(false);
+            //     break;
+            
+        }
     }
 
-    void draw_trajectory(){
-        Vector2 peri_vect{std::cos(peri_argument), std::sin(peri_argument)};
-        DrawLineV(-current_vessel.position, -current_vessel.position + peri_vect * periapsis, RED);
-        DrawLineV(-current_vessel.position, -current_vessel.position - peri_vect * apoapsis, BLUE);
-        //DrawEllipseLines(-current_vessel.position.x, current_vessel.position.y, , BLACK);
-        draw_ellipse(-current_vessel.position, 
-            {sm_axis, sm_axis*(float)sqrt(1-eccentricity*eccentricity)}, 
-            sm_axis-periapsis, RAD2DEG * peri_argument,
+    void draw_planet(Vessel &vessel, CelestialBody &body){
+        DrawCircleSector(-vessel.position, body.radius, 0, 360, 0, BROWN);
+    }
+
+    void draw_trajectory(Vector2 pos, OrbitalElemets &elements){
+        Vector2 peri_vect{std::cos(elements.peri_argument), std::sin(elements.peri_argument)};
+        DrawLineV(pos, pos + peri_vect * elements.periapsis, RED);
+        DrawLineV(pos, pos - peri_vect * elements.apoapsis, BLUE);
+        //DrawEllipseLines(pos.x, vessel.position.y, , BLACK);
+        draw_ellipse(pos, 
+            {elements.sm_axis, elements.sm_axis*(float)sqrt(1-elements.eccentricity*elements.eccentricity)}, 
+            elements.sm_axis-elements.periapsis, RAD2DEG * elements.peri_argument,
             2.5f/camera.zoom, {0,0,0,64});
 
         //DRAW COLLSION
@@ -293,43 +406,53 @@ class FlightScreen: public Screen{
         2.0f/camera.zoom, RED);
     }
 
-    void draw_telemetry(){
+    void draw_telemetry(Vessel &vessel,  OrbitalElemets &elements){
         DrawText(TextFormat("V: %0.2f\nH: %0.2f\nApo: %0.2f\nPer: %0.2f\nEcc: %0.2f\nT: %0.2f\nTp: %0.2f\nTa: %0.2f\nCollision: %d p: %0.4f\nAngle: %0.2f",
-            len(current_vessel.velocity),
-            len(current_vessel.position),
-            apoapsis,
-            periapsis,
-            eccentricity,
-            orbital_period,
-            time_to_peri,
-            time_to_apo,
+            len(vessel.velocity),
+            len(vessel.position) - earth.radius,
+            elements.apoapsis - earth.radius,
+            elements.periapsis - earth.radius,
+            elements.eccentricity,
+            elements.orbital_period,
+            elements.time_to_peri,
+            elements.time_to_apo,
             collision_info.is_colliding,
             collision_info.penetration,
-            current_vessel.rotation_deg),
+            vessel.rotation_deg),
             10,50,24,
             BLACK
             );
 
-        DrawText(TextFormat("DEBUG INFO:\nparts: %d\nengines: %d\nfueltanks: %d\n pos: %s",
-            current_vessel.parts.size(),
-            vessels_parts_data.engines.size(),
-            vessels_parts_data.tanks.size(),
-            to_string(current_vessel.position).c_str()),
-            200,50,8,BLACK);
+        DrawText(TextFormat("DEBUG INFO:\nparts: %d\nengines: %d\nfueltanks: %d\n pos: %s\n camera:%s\n warp: %d",
+            vessel.parts.size(),
+            parts_data.engines.size(),
+            parts_data.tanks.size(),
+            to_string(vessel.position).c_str(),
+            to_string(camera).c_str(),
+            warp),
+            200,50,8,BLACK);            
     }
 
-    void init_new_vessel(){
-
+    int find_atached_tank(Vessel &vessel, PartItem &part){
+        // for(int i=0; i<vessel.parts.size(); ++i){
+        //     PartItem &tank = vessel.parts.at(i);
+        //     if(&tank == &part) continue;
+        //     if(tank.type != TANK) continue;
+        //     if(!check_linkage(part,tank)) continue;
+        //     if(tank.position.y > part.position.y) continue;
+        //     return i;
+        // }
+        int index = find_atached_part(vessel, part);
+        return ((index >= 0 && vessel.parts.at(index).type == PartType::TANK)? index : -1);
     }
 
-    int find_atached_tank(Vessel vessel, PartItem &part){
-        for(int i=0; i<vessel.parts.size(); ++i){
-            PartItem &tank = vessel.parts.at(i);
-            if(&tank == &part) continue;
-            if(tank.type != TANK) continue;
-            if(!check_linkage(part,tank)) continue;
-            if(tank.position.y > part.position.y) continue;
-            return i;
+    int find_atached_part(Vessel &vessel, PartItem &item){
+        Vector2 linkage_pos = linkages.at(item.id).at(0);
+        linkage_pos = transform_point(linkage_pos, item.position, item.rotation_degree * DEG2RAD, item.scale);
+        for(size_t i = 0; i<vessel.parts.size(); ++i){
+            PartItem &item_check = vessel.parts.at(i);
+            Vector2 link_pos_check = inv_transform_point(linkage_pos, item_check.position, item_check.rotation_degree * DEG2RAD, item_check.scale);
+            if(has_point(get_polygon(item_check.id), link_pos_check)) return i;
         }
         return -1;
     }
@@ -340,65 +463,101 @@ public:
             [](){ change_screen_handler(); },
             screenWidth - 110, screenHeight-40, 100, 30});
 
-        current_vessel = *(Vessel*)(data);
-        current_vessel.position = {0, -earth_radius};//-(earth_radius*1.01f)};
-        //current_vessel.velocity = {std::sqrt(gravity_magnitude / (earth_radius*1.01f)), 0.0f};
+        
+        vessels.push_back(*(Vessel*)(data));
+        active_vessel_index = vessels.size() - 1;
+        Vessel &new_vessel = get_active_vessel();
+        new_vessel.position = {0, -earth.radius};//-(earth.radius*1.01f)};
+        //new_vessel.velocity = {std::sqrt(earth.gravity / (earth.radius*1.01f)), 0.0f};
 
-        for(PartItem &part: current_vessel.parts){
+        for(PartItem &part: new_vessel.parts){
             std::cout<<"part_type: "<<part.type<<std::endl;
         }
 
-        for(int i = 0; i < current_vessel.parts.size(); ++i){
-            PartItem & part = current_vessel.parts[i];
+        for(int i = 0; i < new_vessel.parts.size(); ++i){
+            PartItem & part = new_vessel.parts.at(i);
             switch (part.type){
             case PartType::ENGINE:
             { 
-                vessels_parts_data.engines.push_back(EnginePart());
-                part.data_index = vessels_parts_data.engines.size() - 1;
-                EnginePart &engine = vessels_parts_data.engines[part.data_index];
-                engine.fuel_tank_index = find_atached_tank(current_vessel, part);
+                parts_data.engines.push_back(EnginePart());
+                part.data_index = parts_data.engines.size() - 1;
+                EnginePart &engine = parts_data.get_engine(part.data_index);
+                engine.fuel_tank_index = find_atached_tank(new_vessel, part);
                 if(engine.fuel_tank_index < 0) assert(false);
             }
                 break;
             case PartType::TANK:
             {
-                vessels_parts_data.tanks.push_back(FueltankPart());
-                part.data_index = vessels_parts_data.tanks.size() - 1;
-                FueltankPart &tank = vessels_parts_data.tanks[part.data_index];
-                tank.prev_tank_index = find_atached_tank(current_vessel, part);
+                parts_data.tanks.push_back(FueltankPart());
+                part.data_index = parts_data.tanks.size() - 1;
+                FueltankPart &tank = parts_data.get_tank(part.data_index);
+                tank.prev_tank_index = find_atached_tank(new_vessel, part);
                 if(tank.prev_tank_index < 0) TraceLog(LOG_INFO, "Prev_tank NOT found");
                 else TraceLog(LOG_INFO, "Prev_tamk found");
             }
                 break;
             case PartType::NONE: break;
+            case PartType::SEPARATE: break;
+            case PartType::LIFE_SUPPORT: break;
             default:
                 TraceLog(LOG_INFO, TextFormat("ERROR: Unknown part type: %s", std::to_string((int)part.type).c_str()));
                 assert(false);
                 break;
             }
+
+            // for(PartItem &part: new_vessel.parts){
+            //     if(part.data_index == -1 || part.info_index == -1){
+            //         assert(false);
+            //     }
+            // }
         }
 
         TraceLog(LOG_INFO, "FLIGHT SCREEN INIT");
     }
 
+    
     virtual void update() override {
+        float dt = GetFrameTime();
         float wheel = GetMouseWheelMove();
         camera.zoom *= 1.0 + 0.1 * wheel;
 
-        update_vessel(current_vessel);
-        update_telemetry();
+        dt *= std::pow(2.0, (double)warp);
+        if(IsKeyPressed(KEY_COMMA) && warp > 0) --warp;
+        if(IsKeyPressed(KEY_PERIOD)) ++warp;
+
+        Vessel & active_vessel = get_active_vessel();
+
+        vessel_input(active_vessel, dt);
+        for(Vessel& vessel: vessels){
+            update_vessel(vessel, dt);
+            planet_collision(vessel,earth);
+            update_telemetry(vessel, earth, vessel.elements);
+            for(Vessel &other_vessel: vessels){
+                if(&vessel == &other_vessel) continue;
+                vessel2vessel_collision(vessel, other_vessel);
+            }
+        }
         update_gui();
         update_throttle();
+        active_vessel.throttle = throttle;
+        update_click_action(active_vessel);
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
         BeginMode2D(camera);
-            draw_planet();
-            draw_ship();
-            draw_trajectory();
+            draw_planet(active_vessel, earth);
+            for(Vessel& vessel: vessels){
+                Vector2 pos = vessel.position - active_vessel.position;
+                //DrawCircleV(pos, vessel.broad_phase_radius, Color{0,0,255,128});
+                if(camera.zoom > 5.0) draw_vessel(vessel.parts, pos, vessel.rotation_deg);
+                else DrawCircleSector(pos, 5.0/camera.zoom, 0,360, 4, GRAY);
+                draw_trajectory(-active_vessel.position, vessel.elements);
+                draw_exhausts(vessel, active_vessel.position);
+            }
+            draw_tank_guages(active_vessel);
         EndMode2D();
             draw_gui();
-            draw_telemetry();
+            draw_telemetry(active_vessel, active_vessel.elements);
             draw_throttle();
             DrawFPS(10, 10);
         EndDrawing();
@@ -406,7 +565,9 @@ public:
 
     virtual void* release() override{
         clear_gui_data();
-        current_vessel.parts.clear();
+        // current_vessel.parts.clear();
+        // parts_data.engines.clear();
+        // parts_data.tanks.clear();
         TraceLog(LOG_INFO, "FLIGHT SCREEN RELEASE");
         return nullptr;
     }
